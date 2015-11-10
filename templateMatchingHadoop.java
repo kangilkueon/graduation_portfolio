@@ -44,7 +44,7 @@ import java.util.Set;
 
 public class templateMatchingHadoop extends Configured implements Tool {
 	// Set HDFS Default Folder
-	private final String HDFS_PATH = "/user/ubuntu";
+	private static final String HDFS_PATH = "/user/ubuntu";
 	public static class FaceCountMapper extends Mapper<ImageHeader, FloatImage, IntWritable, Text> {
 		
 
@@ -77,20 +77,19 @@ public class templateMatchingHadoop extends Configured implements Tool {
 		public String dectectCarNumber(Mat file_name){
 			Mat image_src = file_name;
 			Mat image;
-			int standard = 600;
-			if(image_src.width() < standard || image_src.height() < standard){
-				int width = standard;
-				int height = standard * image_src.height() / image_src.width();
-				image = new Mat(height, width, Core.DEPTH_MASK_ALL);
-				Imgproc.resize(image_src, image, image.size());
-			} else if(image_src.width() > standard * 2 || image_src.height() > standard * 2){
-				int width = standard;
-				int height = standard * image_src.height() / image_src.width();
-				image = new Mat(height, width, Core.DEPTH_MASK_ALL);
-				Imgproc.resize(image_src, image, image.size());
+			// Resize image, because of aws' ram
+			int standard = 840;
+			int width = 0;
+			int height = 0;
+			if(image_src.width() > image_src.height()){
+				width = standard;
+				height = standard * image_src.height() / image_src.width();
 			} else {
-				image = image_src;
+				height = standard;
+				width = standard * image_src.width() / image_src.height();
 			}
+			image = new Mat(height, width, Core.DEPTH_MASK_ALL);/**/
+			Imgproc.resize(image_src, image, image.size());
 
 			Mat imageBlurr = imagePreProcess(image);
 			Mat imageA = imageBinary(imageBlurr);
@@ -101,46 +100,71 @@ public class templateMatchingHadoop extends Configured implements Tool {
 			contours = removeSmallPiece(contours, image.width(), 0.9, image.height(), 0);
 
 			// Detect Car Board
-			int k = 0;
-			int kk = 0;
 			Mat car_num_board = null;
 			int max_contours = 0;
+			int k = 0; int test = 0;String test2 = "";
 			for(int i=0; i< contours.size();i++){
 				Rect rect = Imgproc.boundingRect(contours.get(i));
 
 				double ratio = (double) rect.width / (double) rect.height;
+				int standard2 = 600;
+				int n_width = 0;//600;//rect.width * 2;
+				int n_height = 0;//n_width * rect.height / rect.width; //rect.height * 2;
+				if(rect.width > rect.height){
+					n_width = standard2;
+					n_height = standard2 * rect.height / rect.width;
+				} else {
+					n_height = standard2;
+					n_width = standard2 * rect.width / rect.height;
+				}
+
+				// Resize car# board for accuracy
 				Mat t_num_board = new Mat(rect.height, rect.width, Core.DEPTH_MASK_ALL);
-				Mat num_board = new Mat(rect.height * 2, rect.width * 2, Core.DEPTH_MASK_ALL);
-				t_num_board = image.submat(rect.y, rect.y + rect.height, rect.x, rect.x + rect.width);
-				k++;
+				Mat num_board = new Mat(n_height, n_width, Core.DEPTH_MASK_ALL); /**/
+				t_num_board = imageA.submat(rect.y, rect.y + rect.height, rect.x, rect.x + rect.width);
+//				t_num_board = image.submat(rect.y, rect.y + rect.height, rect.x, rect.x + rect.width);
 
 				Imgproc.resize(t_num_board, num_board, num_board.size());
 
-				Mat imageBlurr2 = imagePreProcess(num_board);
-				Mat imageA2 = imageBinary(imageBlurr2);
+//				Mat imageBlurr2 = imagePreProcess(num_board);
+//				Mat imageA2 = imageBinary(imageBlurr2);
 
 				List<MatOfPoint> contours2 = new ArrayList<MatOfPoint>();
-				Imgproc.findContours(imageA2, contours2, new Mat(), Imgproc.RETR_LIST,Imgproc.CHAIN_APPROX_SIMPLE);
+//				Imgproc.findContours(imageA2, contours2, new Mat(), Imgproc.RETR_LIST,Imgproc.CHAIN_APPROX_SIMPLE);
+				Imgproc.findContours(num_board, contours2, new Mat(), Imgproc.RETR_LIST,Imgproc.CHAIN_APPROX_SIMPLE);
 
-				contours2 = removeSmallPiece(contours2, imageA2.width(), 0.9, image.height(), 0);
+//				contours2 = removeSmallPiece(contours2, imageA2.width(), 0.9, image.height(), 0);
+//				contours2 = removeSmallPiece(contours2, num_board.width(), 0.9, num_board.height(), 0);
 				if(max_contours < contours2.size()){
 					if(ratio > 1.5){ // Car board's width will larger than height
 						// Car board has 6 number, so there will be more than 4 rectangle in the contours.
 						int max_cnt = getSimiliarSizeRect(contours2);
 						if(max_cnt >= 4){
 							max_contours = contours2.size();
-							car_num_board = num_board;
+//							car_num_board = t_num_board;
+							car_num_board = image.submat(rect.y, rect.y + rect.height, rect.x, rect.x + rect.width);
+							test = k;
+test2 = "" + rect.width;
 						}
 					}
 				}
+				k++;
+				num_board.release();
+				t_num_board.release();
 			}
 
 			String result = "";
 			if(car_num_board == null){
-				result = "CAN NOT DETECT CAR BOARD";
+				result = "ERROR_CAN_NOT_DETECT_CAR_NUMBER_BOARD";
 			} else {
 				result = startRecognization(car_num_board);
 			}
+			image_src.release();
+			imageBlurr.release();
+			image.release();
+			imageA.release();
+			car_num_board.release();
+			result = result;// + "//k:" +  k + "//test:" + test + "//test2:" + test2;
 			return result;
 		}
 
@@ -235,11 +259,13 @@ public class templateMatchingHadoop extends Configured implements Tool {
 			for (int i = 0; i < 10; i++){
 				try {
 					FileInputStream file = new FileInputStream("./" + i + ".jpg");
+					//FileInputStream file = new FileInputStream(HDFS_PATH + "/num/" + i + ".jpg");
 					FloatImage nimage = JPEGImageUtil.getInstance().decodeImage(file);
 
 					Mat number_matrix = this.convertFloatImageToOpenCVMat(nimage, CvType.CV_32F);
 					num_list.add(number_matrix);
-
+					number_matrix.release();
+					file.close();
 				} catch (Exception e){
 					System.err.println(e.toString());
 				}
@@ -268,6 +294,7 @@ public class templateMatchingHadoop extends Configured implements Tool {
 							double min = 100000000;
 					 		
 							for (int n = 0; n < 10; n++){
+								//Mat num = Highgui.imread(HDFS_PATH + "/num/" + n + ".jpg", CvType.CV_32F);
 								Mat num = Highgui.imread("./" + n + ".jpg", CvType.CV_32F);
 								Mat result = new Mat(t_mat.size(), CvType.CV_64FC1);
 								Imgproc.resize(num, num, t_mat.size());
@@ -290,6 +317,8 @@ public class templateMatchingHadoop extends Configured implements Tool {
 										result_num = n;
 									}
 								}
+								num.release();
+								result.release();
 							}
 
 							if (max > 1){
@@ -297,18 +326,22 @@ public class templateMatchingHadoop extends Configured implements Tool {
 								if(result_num > -1){
 								car_number = result_num + car_number;
 							}
+							t_mat.release();
 						}
 					}
 				}
 			}
 			if(car_number.length() == 6){
-				car_number = car_number.substring(0, 2) + " " + car_number.substring(2, 6);
+				car_number = car_number.substring(0, 2) + "_" + car_number.substring(2, 6);
 			} else if(car_number.length() == 7){
-				car_number = car_number.substring(0, 2) + " " + car_number.substring(3, 7);
+				car_number = car_number.substring(0, 2) + "_" + car_number.substring(3, 7);
 			} else if(car_number.length() < 3){
-				car_number = "CAN NOT DETECTION";
+				car_number = "FINDING_NUMBER_IS_SMALLER_THAN_3 (" + car_number + ")";
 			}
-			System.out.println(car_number);
+			image.release();
+			imageBlurr.release();
+			imageA.release();
+			//System.out.println(car_number);
 			return car_number;
 		}
 
@@ -339,11 +372,22 @@ public class templateMatchingHadoop extends Configured implements Tool {
 			Imgproc.erode(imageBlurr, imageBlurr, new Mat());
 			Imgproc.dilate(imageBlurr, imageBlurr, new Mat());
 
+			imageHSV.release();
+			imageCANNY.release();
 			return imageBlurr;
 		}
 
 		public Mat imageBinary(Mat src){
-			Mat imageA = new Mat(src.size(), Core.DEPTH_MASK_ALL);
+/*			Mat t_src = null;
+			Mat imageA = null;
+			int nWidth = 800;
+			int nHeight = nWidth * src.height() / src.width();
+			t_src = new Mat(nHeight, nWidth, Core.DEPTH_MASK_ALL);
+			Imgproc.resize(src, t_src, t_src.size());
+			imageA = new Mat(t_src.size(), Core.DEPTH_MASK_ALL);
+			Imgproc.adaptiveThreshold(t_src, imageA, 255,Imgproc.ADAPTIVE_THRESH_MEAN_C, Imgproc.THRESH_BINARY, 7, 5);
+*/
+			Mat imageA = new Mat(src.size(), Core.DEPTH_MASK_ALL);/**/
 			Imgproc.adaptiveThreshold(src, imageA, 255,Imgproc.ADAPTIVE_THRESH_MEAN_C, Imgproc.THRESH_BINARY, 7, 5);
 
 			return imageA;
@@ -358,6 +402,7 @@ public class templateMatchingHadoop extends Configured implements Tool {
 
 				int width = rect.width;
 				int height = rect.height;
+
 				if (Imgproc.contourArea(contours.get(i)) <= 50){
 					contours.remove(i);
 				} 
@@ -370,15 +415,17 @@ public class templateMatchingHadoop extends Configured implements Tool {
 					contours.remove(i);
 				}
 				//else if(width / height > 2) contours.remove(i);
+/*
+				// remove contours has too large width
+				if(width > 750) contours.remove(i);
+				// remove contours has too small height
+				else if(height < min_height) contours.remove(i); */
 			}
 
 			return contours;
 		}
 
 		public int getSimiliarSizeRect(List<MatOfPoint> contours){
-			/* 숫자 골라내기
-			* Height 값 기준으로 비슷한 범위 내에 있는 걸로 뽑아내기.
-			*/
 			Set<Integer> key_list = new HashSet<Integer>();
 			Map<Integer, Integer> height_cnt = new HashMap<Integer, Integer>();
 			for(int j = 0; j < contours.size(); j++){
@@ -400,9 +447,6 @@ public class templateMatchingHadoop extends Configured implements Tool {
 		}
 
 		public int getSimiliarSizeRectValue(List<MatOfPoint> contours, List exclude_list, int type){
-			/* 숫자 골라내기
-			* Height 값 기준으로 비슷한 범위 내에 있는 걸로 뽑아내기.
-			*/
 			Set<Integer> key_list = new HashSet<Integer>();
 			Map<Integer, Integer> value_cnt = new HashMap<Integer, Integer>();
 			for(int i = 0; i < contours.size(); i++){
@@ -432,8 +476,9 @@ public class templateMatchingHadoop extends Configured implements Tool {
 		public void setup(Context context) throws IOException, InterruptedException {
 			// Load OpenCV native library
 			try {
-				System.load("/usr/lib/libopencv_java2411.so");
+				// System.load("/usr/lib/libopencv_java2411.so");
 				// System.loadLibrary(Core.NATIVE_LIBRARY_NAME);
+				System.load((new File("/usr/lib/libopencv_java2411.so")).getAbsolutePath());
 			} catch (UnsatisfiedLinkError e) {
 				System.err.println("Native code library failed to load.\n" + e + "\n" + Core.NATIVE_LIBRARY_NAME);
 				System.err.println("#" + System.getProperty("java.library.path"));
@@ -459,17 +504,17 @@ public class templateMatchingHadoop extends Configured implements Tool {
 
 		public void map(ImageHeader key, FloatImage value, Context context) throws IOException, InterruptedException {
 			// Verify that image was properly decoded, is of sufficient size, and has three color channels (RGB)
-			String car_num = "Can not find";
+			String car_num = "CAN_NOT_FIND";
 			if (value != null && value.getWidth() > 1 && value.getHeight() > 1 && value.getBands() == 3) {
-				System.err.println("In the if");
+				Mat cvImage = this.convertFloatImageToOpenCVMat(value, CvType.CV_8UC3);
 				try {
-					Mat cvImage = this.convertFloatImageToOpenCVMat(value, CvType.CV_8UC3);
 					car_num = this.dectectCarNumber(cvImage);
+					System.out.println("Result::" + car_num);
 				} catch(Exception e){
 					System.err.println("ERROR");
-					
 					e.printStackTrace();
 				}
+				cvImage.release();
 				// Emit record to reducer
 				context.write(new IntWritable(1), new Text(car_num));
 			} // If (value != null...
@@ -483,7 +528,7 @@ public class templateMatchingHadoop extends Configured implements Tool {
 			int images = 0;
 			int num = 1;
 			for (Text val : values) {
-				result += "\\n" + num +"  :  " + val.toString();
+				result += "\\n" + "" + val.toString();
 				images++;
 				num++;
 			}
@@ -522,6 +567,7 @@ public class templateMatchingHadoop extends Configured implements Tool {
 		for (int n = 0; n < 10; n++){
 			job.addCacheFile(new URI(HDFS_PATH + "/num/" + n + ".jpg#" + n + ".jpg"));
 		}
+		job.addCacheFile(new URI(HDFS_PATH+"/lib/libopencv_java2411.so#libopencv_java2411.so"));
 
 		// Execute the MapReduce job and block until it complets
 		boolean success = job.waitForCompletion(true);
