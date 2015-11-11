@@ -309,7 +309,7 @@ public class templateMatchingHadoop extends Configured implements Tool {
 				while (car_number.length() > 6) {
 					int idx = 0;
 					double min = Double.MAX_VALUE;
-					for (int i = candidate.size() - 1, i >= 0; i--) {
+					for (int i = candidate.size() - 1; i >= 0; i--) {
 						if (min > (double) candidate.get(i)) {
 							min = (double) candidate.get(i);
 							idx = i;
@@ -325,7 +325,7 @@ public class templateMatchingHadoop extends Configured implements Tool {
 			} else if(car_number.length() == 7){
 				car_number = car_number.substring(0, 2) + "_" + car_number.substring(3, 7);
 			} else if(car_number.length() < 3){
-				car_number = "FINDING_NUMBER_IS_SMALLER_THAN_3 (" + car_number + ")";
+				car_number = "FINDING_NUMBER_IS_SMALLER_THAN_3(" + car_number + ")";
 			}
 			image.release();
 			imageBlurr.release();
@@ -402,6 +402,7 @@ public class templateMatchingHadoop extends Configured implements Tool {
 		}
 
 		public List<MatOfPoint> removeSmallPiece(List<MatOfPoint> contours, int max_width, double width_threshold, int min_height, double height_threshold){
+			int area = max_width * min_height / 50;
 			max_width = (int) (max_width * width_threshold);
 			min_height = (int) (min_height * height_threshold);
 			// Delete too small size contours or too larget size contours
@@ -414,7 +415,7 @@ public class templateMatchingHadoop extends Configured implements Tool {
 				if (Imgproc.contourArea(contours.get(i)) <= 50){
 					contours.remove(i);
 				} 
-				else if(width >= max_width) contours.remove(i);
+				else if(width >= max_width && (width * height > area)) contours.remove(i);
 				else if(height <= 28){
 					contours.remove(i);
 				} else if (width <= 20) {
