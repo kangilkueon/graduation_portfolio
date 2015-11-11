@@ -75,22 +75,7 @@ public class templateMatchingHadoop extends Configured implements Tool {
 		/* First, find the car number plate */
 		public String dectectCarNumber(Mat file_name){
 			Mat image_src = file_name;
-			Mat image;
-
-			// Resize image, because of aws' ram
-			int standard = 840;
-			int width = 0;
-			int height = 0;
-			if(image_src.width() > image_src.height()){
-				width = standard;
-				height = standard * image_src.height() / image_src.width();
-			} else {
-				height = standard;
-				width = standard * image_src.width() / image_src.height();
-			}
-			image = new Mat(height, width, Core.DEPTH_MASK_ALL);
-			Imgproc.resize(image_src, image, image.size());
-
+			Mat image = imageResize(image_src, 840);
 			Mat imageBlurr = imagePreProcess(image);
 			Mat imageA = imageBinary(imageBlurr);
 
@@ -106,25 +91,16 @@ public class templateMatchingHadoop extends Configured implements Tool {
 				Rect rect = Imgproc.boundingRect(contours.get(i));
 
 				double ratio = (double) rect.width / (double) rect.height;
-				int standard2 = 600;
-				int n_width = 0;
-				int n_height = 0;
-				if(rect.width > rect.height){
-					n_width = standard2;
-					n_height = standard2 * rect.height / rect.width;
-				} else {
-					n_height = standard2;
-					n_width = standard2 * rect.width / rect.height;
-				}
 
 				// Resize car# board for accuracy
 				Mat t_num_board = new Mat(rect.height, rect.width, Core.DEPTH_MASK_ALL);
-				Mat num_board = new Mat(n_height, n_width, Core.DEPTH_MASK_ALL); /**/
 				t_num_board = imageA.submat(rect.y, rect.y + rect.height, rect.x, rect.x + rect.width);
-
-				Imgproc.resize(t_num_board, num_board, num_board.size());
-
-				hasChild (num_board, 6);
+				
+				Mat num_board = imageResize(t_num_board, 600);
+				if (hasChild (num_board, 6)) {
+					car_num_board = image.submat(rect.y, rect.y + rect.height, rect.x, rect.x + rect.width);
+					break;
+				}
 
 				List<MatOfPoint> contours2 = new ArrayList<MatOfPoint>();
 				Imgproc.findContours(num_board, contours2, new Mat(), Imgproc.RETR_LIST,Imgproc.CHAIN_APPROX_SIMPLE);
@@ -145,7 +121,9 @@ public class templateMatchingHadoop extends Configured implements Tool {
 
 			String result = "";
 			if(car_num_board == null){
-				result = "ERROR_CAN_NOT_DETECT_CAR_NUMBER_BOARD";
+				//result = "ERROR_CAN_NOT_DETECT_CAR_NUMBER_BOARD";
+				/* if car plate cannot be found, then just pass original image */
+				result = startRecognization(image);
 			} else {
 				result = startRecognization(car_num_board);
 			}
@@ -259,6 +237,10 @@ public class templateMatchingHadoop extends Configured implements Tool {
 
 			/* template matching */
 			int k = 0;
+			/* To select number when number of detecting number is more than 7 */
+			int candidate_size = contours.size() - test.size();
+			List candidate = null;
+			if (candidate_size > 6) candidate = new ArrayList();
 			for(int i=0; i< contours.size();i++){
 				if (true){
 					Rect rect = Imgproc.boundingRect(contours.get(i));
@@ -267,7 +249,7 @@ public class templateMatchingHadoop extends Configured implements Tool {
 					if(test.contains(i)) {
 						isContinued = false;
 					}
-					if(isContinued)
+					if(isContinued) {
 						if (true){
 							Core.rectangle(image, new Point(rect.x,rect.y), new Point(rect.x+rect.width,rect.y+rect.height),new Scalar(0,0,255));
 							int t_width = rect.width;
@@ -311,13 +293,33 @@ public class templateMatchingHadoop extends Configured implements Tool {
 							if (max > 1){
 
 								if(result_num > -1){
-								car_number = result_num + car_number;
+									if (candidate_size > 6) {
+										candidate.add(max);
+									}
+									car_number = result_num + car_number;
+								}
+								t_mat.release();
 							}
-							t_mat.release();
 						}
 					}
 				}
 			}
+			/* Cut string, if car_number size is more than 6 */
+			if (car_number.length() > 6) {
+				while (car_number.length() > 6) {
+					int idx = 0;
+					double min = Double.MAX_VALUE;
+					for (int i = candidate.size() - 1, i >= 0; i--) {
+						if (min > (double) candidate.get(i)) {
+							min = (double) candidate.get(i);
+							idx = i;
+						}
+					}
+					candidate.remove(idx);
+					car_number = car_number.substring(0, car_number.length() - idx - 1) + car_number.substring(car_number.length() - idx, car_number.length());
+				}
+			}
+
 			if(car_number.length() == 6){
 				car_number = car_number.substring(0, 2) + "_" + car_number.substring(2, 6);
 			} else if(car_number.length() == 7){
@@ -343,6 +345,24 @@ public class templateMatchingHadoop extends Configured implements Tool {
 			contours = removeSmallPiece(contours, image_src.width(), 0.5, image_src.height(), 0.4);
 			if (contours.size() >= size) return true;
 			return false;
+		}
+
+		private Mat imageResize (Mat image_src, int standard) {
+			Mat image;
+
+			int width = 0;
+			int height = 0;
+			if(image_src.width() > image_src.height()){
+				width = standard;
+				height = standard * image_src.height() / image_src.width();
+			} else {
+				height = standard;
+				width = standard * image_src.width() / image_src.height();
+			}
+			image = new Mat (height, width, Core.DEPTH_MASK_ALL);
+			Imgproc.resize (image_src, image, image.size());
+
+			return image;
 		}
 
 		public Mat imagePreProcess(Mat src){
