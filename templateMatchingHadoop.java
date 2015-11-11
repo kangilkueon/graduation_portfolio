@@ -50,11 +50,9 @@ public class templateMatchingHadoop extends Configured implements Tool {
 
 		// Convert HIPI FloatImage to OpenCV Mat
 		public Mat convertFloatImageToOpenCVMat(FloatImage floatImage, int type) {
-			// Get dimensions of image
 			int w = floatImage.getWidth();
 			int h = floatImage.getHeight();
 
-			// Get pointer to image data
 			float[] valData = floatImage.getData();
 
 			// Initialize 3 element array to hold RGB pixel average
@@ -73,10 +71,12 @@ public class templateMatchingHadoop extends Configured implements Tool {
 			}
 			return mat;
 		}
-
+		
+		/* First, find the car number plate */
 		public String dectectCarNumber(Mat file_name){
 			Mat image_src = file_name;
 			Mat image;
+
 			// Resize image, because of aws' ram
 			int standard = 840;
 			int width = 0;
@@ -88,7 +88,7 @@ public class templateMatchingHadoop extends Configured implements Tool {
 				height = standard;
 				width = standard * image_src.width() / image_src.height();
 			}
-			image = new Mat(height, width, Core.DEPTH_MASK_ALL);/**/
+			image = new Mat(height, width, Core.DEPTH_MASK_ALL);
 			Imgproc.resize(image_src, image, image.size());
 
 			Mat imageBlurr = imagePreProcess(image);
@@ -99,17 +99,16 @@ public class templateMatchingHadoop extends Configured implements Tool {
 
 			contours = removeSmallPiece(contours, image.width(), 0.9, image.height(), 0);
 
-			// Detect Car Board
+			// Detect Car number plate
 			Mat car_num_board = null;
 			int max_contours = 0;
-			int k = 0; int test = 0;String test2 = "";
 			for(int i=0; i< contours.size();i++){
 				Rect rect = Imgproc.boundingRect(contours.get(i));
 
 				double ratio = (double) rect.width / (double) rect.height;
 				int standard2 = 600;
-				int n_width = 0;//600;//rect.width * 2;
-				int n_height = 0;//n_width * rect.height / rect.width; //rect.height * 2;
+				int n_width = 0;
+				int n_height = 0;
 				if(rect.width > rect.height){
 					n_width = standard2;
 					n_height = standard2 * rect.height / rect.width;
@@ -122,33 +121,24 @@ public class templateMatchingHadoop extends Configured implements Tool {
 				Mat t_num_board = new Mat(rect.height, rect.width, Core.DEPTH_MASK_ALL);
 				Mat num_board = new Mat(n_height, n_width, Core.DEPTH_MASK_ALL); /**/
 				t_num_board = imageA.submat(rect.y, rect.y + rect.height, rect.x, rect.x + rect.width);
-//				t_num_board = image.submat(rect.y, rect.y + rect.height, rect.x, rect.x + rect.width);
 
 				Imgproc.resize(t_num_board, num_board, num_board.size());
 
-//				Mat imageBlurr2 = imagePreProcess(num_board);
-//				Mat imageA2 = imageBinary(imageBlurr2);
+				hasChild (num_board, 6);
 
 				List<MatOfPoint> contours2 = new ArrayList<MatOfPoint>();
-//				Imgproc.findContours(imageA2, contours2, new Mat(), Imgproc.RETR_LIST,Imgproc.CHAIN_APPROX_SIMPLE);
 				Imgproc.findContours(num_board, contours2, new Mat(), Imgproc.RETR_LIST,Imgproc.CHAIN_APPROX_SIMPLE);
 
-//				contours2 = removeSmallPiece(contours2, imageA2.width(), 0.9, image.height(), 0);
-//				contours2 = removeSmallPiece(contours2, num_board.width(), 0.9, num_board.height(), 0);
 				if(max_contours < contours2.size()){
 					if(ratio > 1.5){ // Car board's width will larger than height
 						// Car board has 6 number, so there will be more than 4 rectangle in the contours.
 						int max_cnt = getSimiliarSizeRect(contours2);
 						if(max_cnt >= 4){
 							max_contours = contours2.size();
-//							car_num_board = t_num_board;
 							car_num_board = image.submat(rect.y, rect.y + rect.height, rect.x, rect.x + rect.width);
-							test = k;
-test2 = "" + rect.width;
 						}
 					}
 				}
-				k++;
 				num_board.release();
 				t_num_board.release();
 			}
@@ -164,10 +154,11 @@ test2 = "" + rect.width;
 			image.release();
 			imageA.release();
 			car_num_board.release();
-			result = result;// + "//k:" +  k + "//test:" + test + "//test2:" + test2;
+			result = result;
 			return result;
 		}
 
+		/* Start detection of number in car number plate */
 		public String startRecognization(Mat car_num_board){
 			String car_number = "";
 			Mat image = car_num_board;
@@ -180,6 +171,8 @@ test2 = "" + rect.width;
 			contours = removeSmallPiece(contours, image.width(), 0.5, image.height(), 0.4);
 
 			List<Integer> test = new ArrayList<Integer>();
+
+			/* remove children of rectangle */
 			for(int i=0; i< contours.size();i++){
 				Rect rect = Imgproc.boundingRect(contours.get(i));
 				int rect_x1 = rect.x;
@@ -199,35 +192,29 @@ test2 = "" + rect.width;
 				}
 			}
 
+			/* All number has similar size, so if rectangle do not have similar size, then remove it */
 			int s_height = getSimiliarSizeRectValue(contours, test, 0); 
-			int min_val = s_height * 80 / 100;
-			int max_val = s_height * 120 / 100;
+			int s_width = getSimiliarSizeRectValue(contours, test, 1); 
+			int min_val_w = s_width * 50 / 100;
+			int max_val_w = s_width * 150 / 100;
+			int min_val_h = s_height * 80 / 100;
+			int max_val_h = s_height * 120 / 100;
 			for(int i = 0; i < contours.size(); i++){
 				if(!test.contains(i)) {
 					Rect rect = Imgproc.boundingRect(contours.get(i));
 
 					int apprx_height = rect.height/10 * 10;
+					int apprx_width = rect.width / 10 * 10;
 
-					if(max_val < apprx_height || min_val > apprx_height){
+					if(max_val_h < apprx_height || min_val_h > apprx_height){
 						if(!test.contains(i)) test.add(i);
-					}
-				}
-			}
-			int s_width = getSimiliarSizeRectValue(contours, test, 1); 
-			min_val = s_width * 50 / 100;
-			max_val = s_width * 150 / 100;
-			for(int i = 0; i < contours.size(); i++){
-				if(!test.contains(i)) {
-					Rect rect = Imgproc.boundingRect(contours.get(i));
-
-					int apprx_height = rect.width/10 * 10;
-
-					if(max_val < apprx_height || min_val > apprx_height){
+					} else if (max_val_w < apprx_width || min_val_w > apprx_width) {
 						if(!test.contains(i)) test.add(i);
 					}
 				}
 			}
 
+			/* Sorting */
 			for(int i = 0; i < contours.size(); i++){
 				for (int j = 0; j < contours.size(); j++){
 					boolean isContinued = true;
@@ -254,7 +241,6 @@ test2 = "" + rect.width;
 			}
 
 			// Change number image JPEG to HIB File
-		
 			List<Mat> num_list = new ArrayList<Mat>();	
 			for (int i = 0; i < 10; i++){
 				try {
@@ -271,6 +257,7 @@ test2 = "" + rect.width;
 				}
 			}
 
+			/* template matching */
 			int k = 0;
 			for(int i=0; i< contours.size();i++){
 				if (true){
@@ -348,6 +335,16 @@ test2 = "" + rect.width;
 		/* Util 
 		* 
 		*/
+
+		private boolean hasChild (Mat image_src, int size) {
+			List<MatOfPoint> contours = new ArrayList<MatOfPoint>();
+			Imgproc.findContours(image_src, contours, new Mat(), Imgproc.RETR_LIST,Imgproc.CHAIN_APPROX_SIMPLE);
+
+			contours = removeSmallPiece(contours, image_src.width(), 0.5, image_src.height(), 0.4);
+			if (contours.size() >= size) return true;
+			return false;
+		}
+
 		public Mat imagePreProcess(Mat src){
 			Mat imageHSV = new Mat(src.size(), Core.DEPTH_MASK_8U);
 			Mat imageCANNY = new Mat(src.size(), Core.DEPTH_MASK_8U);
@@ -378,16 +375,7 @@ test2 = "" + rect.width;
 		}
 
 		public Mat imageBinary(Mat src){
-/*			Mat t_src = null;
-			Mat imageA = null;
-			int nWidth = 800;
-			int nHeight = nWidth * src.height() / src.width();
-			t_src = new Mat(nHeight, nWidth, Core.DEPTH_MASK_ALL);
-			Imgproc.resize(src, t_src, t_src.size());
-			imageA = new Mat(t_src.size(), Core.DEPTH_MASK_ALL);
-			Imgproc.adaptiveThreshold(t_src, imageA, 255,Imgproc.ADAPTIVE_THRESH_MEAN_C, Imgproc.THRESH_BINARY, 7, 5);
-*/
-			Mat imageA = new Mat(src.size(), Core.DEPTH_MASK_ALL);/**/
+			Mat imageA = new Mat(src.size(), Core.DEPTH_MASK_ALL);
 			Imgproc.adaptiveThreshold(src, imageA, 255,Imgproc.ADAPTIVE_THRESH_MEAN_C, Imgproc.THRESH_BINARY, 7, 5);
 
 			return imageA;
@@ -515,6 +503,7 @@ test2 = "" + rect.width;
 					e.printStackTrace();
 				}
 				cvImage.release();
+				System.gc();
 				// Emit record to reducer
 				context.write(new IntWritable(1), new Text(car_num));
 			} // If (value != null...
